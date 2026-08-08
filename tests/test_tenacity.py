@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import asyncio
 import contextlib
 import datetime
 import logging
@@ -727,6 +728,56 @@ class TestRetryConditions(unittest.TestCase):
 
         self.assertTrue(r(tenacity.Future.construct(1, 2, False)))
         self.assertFalse(r(tenacity.Future.construct(1, 1, False)))
+
+    def _exception_retry_state(self, exc: BaseException) -> "tenacity.RetryCallState":
+        return make_retry_state(
+            1, 1.0, last_result=tenacity.Future.construct(1, exc, True)
+        )
+
+    def test_retry_if_not_exception_type_skips_base_exceptions(self) -> None:
+        """A BaseException that is not an Exception is control flow, not a failure.
+
+        Retrying asyncio.CancelledError swallows a cancellation, which breaks
+        asyncio.wait_for.
+        """
+        retry = tenacity.retry_if_not_exception_type(IOError)
+
+        for exc in (
+            asyncio.CancelledError(),
+            KeyboardInterrupt(),
+            SystemExit(),
+            GeneratorExit(),
+        ):
+            self.assertFalse(retry(self._exception_retry_state(exc)), repr(exc))
+
+    def test_retry_unless_exception_type_skips_base_exceptions(self) -> None:
+        retry = tenacity.retry_unless_exception_type(NameError)
+
+        for exc in (
+            asyncio.CancelledError(),
+            KeyboardInterrupt(),
+            SystemExit(),
+            GeneratorExit(),
+        ):
+            self.assertFalse(retry(self._exception_retry_state(exc)), repr(exc))
+
+    def test_retry_if_not_exception_type_still_retries_exceptions(self) -> None:
+        retry = tenacity.retry_if_not_exception_type(IOError)
+
+        self.assertTrue(retry(self._exception_retry_state(ValueError())))
+        self.assertFalse(retry(self._exception_retry_state(OSError())))
+
+    def test_retry_unless_exception_type_still_retries_exceptions(self) -> None:
+        retry = tenacity.retry_unless_exception_type(NameError)
+
+        self.assertTrue(retry(self._exception_retry_state(ValueError())))
+        self.assertFalse(retry(self._exception_retry_state(NameError())))
+
+    def test_retry_if_exception_type_remains_the_opt_in(self) -> None:
+        """Retrying a cancellation on purpose is still possible, just explicit."""
+        retry = tenacity.retry_if_exception_type(asyncio.CancelledError)
+
+        self.assertTrue(retry(self._exception_retry_state(asyncio.CancelledError())))
 
     def test_retry_any(self) -> None:
         retry = tenacity.retry_any(

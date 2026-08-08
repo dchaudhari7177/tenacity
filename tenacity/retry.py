@@ -114,6 +114,20 @@ class retry_if_exception_type(retry_if_exception):
         return isinstance(e, self.exception_types)
 
 
+def _signals_control_flow(e: BaseException) -> bool:
+    """Whether ``e`` interrupts execution rather than reporting a failure.
+
+    ``asyncio.CancelledError``, ``KeyboardInterrupt``, ``SystemExit`` and
+    ``GeneratorExit`` derive from ``BaseException`` but not ``Exception``,
+    precisely so that blanket handlers leave them alone. Retrying one swallows
+    the cancellation, which breaks ``asyncio.wait_for`` and Ctrl-C.
+
+    ``retry_if_exception_type`` defaults to ``Exception`` and so already skips
+    them; it stays the explicit opt-in for retrying one on purpose.
+    """
+    return not isinstance(e, Exception)
+
+
 class retry_if_not_exception_type(retry_if_exception):
     """Retries except an exception has been raised of one or more types."""
 
@@ -126,6 +140,8 @@ class retry_if_not_exception_type(retry_if_exception):
         super().__init__(self._check)
 
     def _check(self, e: BaseException) -> bool:
+        if _signals_control_flow(e):
+            return False
         return not isinstance(e, self.exception_types)
 
 
@@ -141,6 +157,8 @@ class retry_unless_exception_type(retry_if_exception):
         super().__init__(self._check)
 
     def _check(self, e: BaseException) -> bool:
+        if _signals_control_flow(e):
+            return False
         return not isinstance(e, self.exception_types)
 
     def __call__(self, retry_state: "RetryCallState") -> bool:
