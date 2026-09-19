@@ -734,32 +734,66 @@ class TestRetryConditions(unittest.TestCase):
             1, 1.0, last_result=tenacity.Future.construct(1, exc, True)
         )
 
-    def test_retry_if_not_exception_type_skips_base_exceptions(self) -> None:
-        """A BaseException that is not an Exception is control flow, not a failure.
+    _BASE_EXCEPTIONS = (
+        asyncio.CancelledError,
+        KeyboardInterrupt,
+        SystemExit,
+        GeneratorExit,
+    )
 
-        Retrying asyncio.CancelledError swallows a cancellation, which breaks
-        asyncio.wait_for.
-        """
+    def test_retry_if_not_exception_type_retries_base_exceptions_by_default(
+        self,
+    ) -> None:
+        """The default is unchanged: anything outside the listed types is retried."""
         retry = tenacity.retry_if_not_exception_type(IOError)
 
-        for exc in (
-            asyncio.CancelledError(),
-            KeyboardInterrupt(),
-            SystemExit(),
-            GeneratorExit(),
-        ):
-            self.assertFalse(retry(self._exception_retry_state(exc)), repr(exc))
+        for exc_type in self._BASE_EXCEPTIONS:
+            self.assertTrue(retry(self._exception_retry_state(exc_type())), exc_type)
 
-    def test_retry_unless_exception_type_skips_base_exceptions(self) -> None:
+    def test_retry_if_not_exception_type_can_skip_base_exceptions(self) -> None:
+        """Opt in and a BaseException that is not an Exception propagates.
+
+        Retrying asyncio.CancelledError swallows a cancellation, so under
+        asyncio.wait_for the call is retried instead of unwinding and wait_for
+        never raises TimeoutError.
+        """
+        retry = tenacity.retry_if_not_exception_type(
+            IOError, retry_base_exceptions=False
+        )
+
+        for exc_type in self._BASE_EXCEPTIONS:
+            self.assertFalse(retry(self._exception_retry_state(exc_type())), exc_type)
+
+    def test_retry_unless_exception_type_retries_base_exceptions_by_default(
+        self,
+    ) -> None:
         retry = tenacity.retry_unless_exception_type(NameError)
 
-        for exc in (
-            asyncio.CancelledError(),
-            KeyboardInterrupt(),
-            SystemExit(),
-            GeneratorExit(),
-        ):
-            self.assertFalse(retry(self._exception_retry_state(exc)), repr(exc))
+        for exc_type in self._BASE_EXCEPTIONS:
+            self.assertTrue(retry(self._exception_retry_state(exc_type())), exc_type)
+
+    def test_retry_unless_exception_type_can_skip_base_exceptions(self) -> None:
+        retry = tenacity.retry_unless_exception_type(
+            NameError, retry_base_exceptions=False
+        )
+
+        for exc_type in self._BASE_EXCEPTIONS:
+            self.assertFalse(retry(self._exception_retry_state(exc_type())), exc_type)
+
+    def test_retry_base_exceptions_does_not_change_ordinary_exceptions(self) -> None:
+        """The flag only moves the BaseException legs, never the Exception ones."""
+        for flag in (True, False):
+            nots = tenacity.retry_if_not_exception_type(
+                IOError, retry_base_exceptions=flag
+            )
+            self.assertTrue(nots(self._exception_retry_state(ValueError())), flag)
+            self.assertFalse(nots(self._exception_retry_state(OSError())), flag)
+
+            unless = tenacity.retry_unless_exception_type(
+                NameError, retry_base_exceptions=flag
+            )
+            self.assertTrue(unless(self._exception_retry_state(ValueError())), flag)
+            self.assertFalse(unless(self._exception_retry_state(NameError())), flag)
 
     def test_retry_if_not_exception_type_still_retries_exceptions(self) -> None:
         retry = tenacity.retry_if_not_exception_type(IOError)
